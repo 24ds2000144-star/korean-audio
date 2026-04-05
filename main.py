@@ -5,7 +5,7 @@ import tempfile
 import numpy as np
 import pandas as pd
 import librosa
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -24,13 +24,13 @@ def compute_stats(df: pd.DataFrame) -> dict:
         m = series.mode()
         return m.iloc[0] if not m.empty else None
 
-    def allowed_values(series):
-        unique = series.dropna().unique().tolist()
-        return sorted([str(v) for v in unique]) if len(unique) <= 20 else None
-
     def value_range(series):
         if pd.api.types.is_numeric_dtype(series):
             return {"min": float(series.min()), "max": float(series.max())}
+        unique = series.dropna().unique().tolist()
+        return sorted([str(v) for v in unique]) if len(unique) <= 20 else None
+
+    def allowed_values(series):
         unique = series.dropna().unique().tolist()
         return sorted([str(v) for v in unique]) if len(unique) <= 20 else None
 
@@ -114,9 +114,8 @@ def extract_features(y: np.ndarray, sr: int) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-@app.post("/analyze")
-async def analyze_audio(request: AudioRequest):
-    audio_bytes = base64.b64decode(request.audio_base64)
+async def process_audio(audio_id: str, audio_base64: str) -> dict:
+    audio_bytes = base64.b64decode(audio_base64)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp.write(audio_bytes)
@@ -137,6 +136,22 @@ async def analyze_audio(request: AudioRequest):
     return compute_stats(df)
 
 
+@app.post("/analyze")
+async def analyze_post(request: AudioRequest):
+    return await process_audio(request.audio_id, request.audio_base64)
+
+
+@app.get("/analyze")
+async def analyze_get():
+    return {"status": "ok", "message": "Send POST request with audio_id and audio_base64"}
+
+
+@app.post("/")
+async def root_post(request: Request):
+    body = await request.json()
+    return await process_audio(body.get("audio_id", ""), body.get("audio_base64", ""))
+
+
 @app.get("/")
-def root():
+def root_get():
     return {"status": "ok"}
